@@ -1,27 +1,47 @@
-import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR"
-from PIL import Image
-import io
 import re
-from pdf2image import convert_from_bytes
+from difflib import get_close_matches
 
-def extract_fields(text):
-    vendor = re.findall(r'(Amazon|Reliance|Flipkart|Airtel|Jio)', text)
-    date = re.findall(r'\d{2}[/-]\d{2}[/-]\d{4}', text)
-    amount = re.findall(r'Rs\.?\s?(\d+\.?\d*)', text)
-    return {
-        "vendor": vendor[0] if vendor else "Unknown",
-        "date": date[0] if date else "Unknown",
-        "amount": float(amount[0]) if amount else 0.0,
-        "category": "General"
-    }
+def extract_vendor(text):
+    lines = text.splitlines()
+    top_lines = lines[:5]
+    candidates = []
+    for line in top_lines:
+        line = line.strip()
+        if len(line) >= 3 and line.isupper() and not line.isnumeric():
+            candidates.append(line)
+    if candidates:
+        return candidates[0]
+    for line in top_lines:
+        if line.strip():
+            return line.strip()
+    return "Unknown"
 
-def process_file(uploaded_file):
-    if uploaded_file.name.endswith(".pdf"):
-        images = convert_from_bytes(uploaded_file.read())
-        text = "".join([pytesseract.image_to_string(img) for img in images])
-    else:
-        image = Image.open(uploaded_file)
-        text = pytesseract.image_to_string(image)
+def extract_date(text):
+    match = re.search(r'\d{2}[/-]\d{2}[/-]\d{4}', text)
+    return match.group(0) if match else "Unknown"
 
-    return extract_fields(text)
+def extract_amount(text):
+    text = text.lower().replace(",", "")
+    lines = text.split("\n")
+    keywords = ["total", "subtotal", "grand total", "amount", "total amount"]
+    candidates = []
+    for line in lines:
+        if any(k in line for k in keywords):
+            matches = re.findall(r'\d{2,7}(?:\.\d{1,2})?', line)
+            candidates += [float(m) for m in matches]
+    if candidates:
+        return max(candidates)
+    matches = re.findall(r'\d{2,7}(?:\.\d{1,2})?', text)
+    return max([float(m) for m in matches], default=0.0)
+
+def detect_currency(text):
+    text = text.lower()
+    if "₹" in text or "rs" in text:
+        return "INR ₹"
+    elif "$" in text:
+        return "USD $"
+    elif "€" in text:
+        return "EUR €"
+    elif "£" in text:
+        return "GBP £"
+    return "Unknown"
